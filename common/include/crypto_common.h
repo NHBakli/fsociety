@@ -122,15 +122,5 @@ int fso_aes_decrypt(const uint8_t *key,
  * Retourne FSO_CRYPTO_OK ou un code d'erreur. */
 int fso_aes_generate_key(uint8_t *key);
 
-/* Encode en base64 (utile pour le debug / Wireshark).
- * `out` doit être alloué par l'appelant.
- * Retourne FSO_CRYPTO_OK ou un code d'erreur. */
-int fso_base64_encode(const uint8_t *in, size_t in_len,
-                      char *out, size_t out_size);
-
-/* Décode du base64.
- * Retourne FSO_CRYPTO_OK ou un code d'erreur. */
-int fso_base64_decode(const char *in,
-                      uint8_t *out, size_t *out_len);
 
 #endif /* FSO_CRYPTO_COMMON_H */

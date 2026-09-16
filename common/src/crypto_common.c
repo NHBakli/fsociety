@@ -9,8 +9,6 @@
 #include <openssl/rsa.h>
 #include <openssl/pem.h>
 #include <openssl/err.h>
-#include <openssl/bio.h>
-#include <openssl/buffer.h>
 
 /* ============================================================
  * fsociety — Implémentation crypto (OpenSSL, côté C2)
@@ -370,75 +368,5 @@ int fso_aes_decrypt(const uint8_t *key,
     *out_len = (size_t)total;
 
     EVP_CIPHER_CTX_free(ctx);
-    return FSO_CRYPTO_OK;
-}
-
-/* ---------- Base64 ---------- */
-
-int fso_base64_encode(const uint8_t *in, size_t in_len,
-                      char *out, size_t out_size)
-{
-    if (!in || !out) {
-        return FSO_CRYPTO_ERR_INVALID;
-    }
-
-    BIO *b64 = BIO_new(BIO_f_base64());
-    BIO *mem = BIO_new(BIO_s_mem());
-    if (!b64 || !mem) {
-        BIO_free(b64);
-        BIO_free(mem);
-        return FSO_CRYPTO_ERR_MEMORY;
-    }
-
-    BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
-    BIO_push(b64, mem);
-
-    if (BIO_write(b64, in, (int)in_len) <= 0) {
-        BIO_free_all(b64);
-        return FSO_CRYPTO_ERR_INVALID;
-    }
-    BIO_flush(b64);
-
-    BUF_MEM *bptr = NULL;
-    BIO_get_mem_ptr(mem, &bptr);
-    if (!bptr || bptr->length + 1 > out_size) {
-        BIO_free_all(b64);
-        return FSO_CRYPTO_ERR_MEMORY;
-    }
-
-    memcpy(out, bptr->data, bptr->length);
-    out[bptr->length] = '\0';
-
-    BIO_free_all(b64);
-    return FSO_CRYPTO_OK;
-}
-
-int fso_base64_decode(const char *in,
-                      uint8_t *out, size_t *out_len)
-{
-    if (!in || !out || !out_len) {
-        return FSO_CRYPTO_ERR_INVALID;
-    }
-
-    BIO *b64 = BIO_new(BIO_f_base64());
-    BIO *mem = BIO_new_mem_buf(in, -1);
-    if (!b64 || !mem) {
-        BIO_free(b64);
-        BIO_free(mem);
-        return FSO_CRYPTO_ERR_MEMORY;
-    }
-
-    BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
-    BIO_push(b64, mem);
-
-    int len = BIO_read(b64, out, (int)*out_len);
-    if (len < 0) {
-        BIO_free_all(b64);
-        return FSO_CRYPTO_ERR_INVALID;
-    }
-
-    *out_len = (size_t)len;
-
-    BIO_free_all(b64);
     return FSO_CRYPTO_OK;
 }
