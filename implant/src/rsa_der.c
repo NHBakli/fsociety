@@ -102,7 +102,7 @@ int fso_rsa_bcrypt_to_der(const uint8_t *bcrypt_blob, size_t bcrypt_len,
     const uint8_t *modulus = p + pub_exp_len;
     size_t modulus_len = blob->cbModulus;
 
-    /* Encodage des INTEGER (avec padding si nécessaire). */
+    /* Encodage des INTEGER avec padding. */
     uint8_t modulus_padded[512];
     uint8_t pub_exp_padded[512];
 
@@ -110,13 +110,16 @@ int fso_rsa_bcrypt_to_der(const uint8_t *bcrypt_blob, size_t bcrypt_len,
     size_t exp_pad_len = der_int_pad(pub_exp, pub_exp_len, pub_exp_padded);
 
     /* RSAPublicKey ::= SEQUENCE { modulus INTEGER, publicExponent INTEGER } */
-    size_t rsa_pub_len = der_tlv_size(mod_pad_len) +
-                         der_tlv_size(exp_pad_len);
-
     uint8_t rsa_pub[1024];
     size_t pos = 0;
     pos += der_write_tlv(rsa_pub + pos, 0x02, modulus_padded, mod_pad_len);
     pos += der_write_tlv(rsa_pub + pos, 0x02, pub_exp_padded, exp_pad_len);
+    size_t rsa_pub_len = pos;
+
+    /* Englober RSAPublicKey dans une SEQUENCE. */
+    uint8_t rsa_pub_seq[1024];
+    size_t rsa_pub_seq_len = der_write_tlv(rsa_pub_seq, 0x30,
+                                            rsa_pub, rsa_pub_len);
 
     /* AlgorithmIdentifier ::= SEQUENCE { OID rsaEncryption, NULL } */
     const uint8_t oid_rsa[] = {
@@ -125,21 +128,17 @@ int fso_rsa_bcrypt_to_der(const uint8_t *bcrypt_blob, size_t bcrypt_len,
     const uint8_t null_param[] = { 0x05, 0x00 };
 
     uint8_t alg_id[32];
-    size_t alg_id_inner_len = sizeof(oid_rsa) + sizeof(null_param);
-    size_t alg_id_pos = 0;
-    alg_id_pos += der_write_tlv(alg_id + alg_id_pos, 0x30, NULL, 0);
-    /* On écrit manuellement pour éviter d'allouer. */
     alg_id[0] = 0x30;
-    alg_id[1] = (uint8_t)alg_id_inner_len;
+    alg_id[1] = (uint8_t)(sizeof(oid_rsa) + sizeof(null_param));
     memcpy(alg_id + 2, oid_rsa, sizeof(oid_rsa));
     memcpy(alg_id + 2 + sizeof(oid_rsa), null_param, sizeof(null_param));
-    size_t alg_id_len = 2 + alg_id_inner_len;
+    size_t alg_id_len = 2 + sizeof(oid_rsa) + sizeof(null_param);
 
-    /* BIT STRING contenant RSAPublicKey. */
+    /* BIT STRING contenant RSAPublicKey SEQUENCE. */
     uint8_t bit_string[1024];
     bit_string[0] = 0x00; /* unused bits */
-    memcpy(bit_string + 1, rsa_pub, rsa_pub_len);
-    size_t bit_string_len = 1 + rsa_pub_len;
+    memcpy(bit_string + 1, rsa_pub_seq, rsa_pub_seq_len);
+    size_t bit_string_len = 1 + rsa_pub_seq_len;
 
     uint8_t bit_string_tlv[1024];
     size_t bit_string_tlv_len = der_write_tlv(bit_string_tlv, 0x03,

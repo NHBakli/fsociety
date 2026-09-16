@@ -1,4 +1,6 @@
 #include "server.h"
+#include "handshake.h"
+#include "protocol.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -67,10 +69,19 @@ static int run_server(fso_server_t *srv)
         if (ret == 0) continue; /* timeout */
 
         /* Nouvelle connexion ? */
+        /* Nouvelle connexion ? */
         if (FD_ISSET(srv->listen_fd, &readfds)) {
             int idx = fso_server_accept(srv);
-            if (idx < 0) {
-                /* Pas grave, on continue. */
+            if (idx >= 0) {
+                /* Échange de clé. */
+                uint8_t aes_key[FSO_KEY_SIZE];
+                if (fso_handshake(srv, idx, aes_key) != 0) {
+                    fprintf(stderr, "[-] Handshake échoué pour client #%d\n", idx);
+                    fso_server_disconnect(srv, idx);
+                } else {
+                    printf("[+] Client #%d : session chiffrée établie\n", idx);
+                    /* TODO: stocker aes_key pour ce client. */
+                }
             }
         }
 

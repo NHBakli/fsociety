@@ -147,6 +147,18 @@ int fso_rsa_encrypt(const uint8_t *pub, size_t pub_len,
         return FSO_CRYPTO_ERR_ENCRYPT;
     }
 
+    if (EVP_PKEY_CTX_set_rsa_oaep_md(ctx, EVP_sha256()) <= 0) {
+        EVP_PKEY_CTX_free(ctx);
+        EVP_PKEY_free(pkey);
+        return FSO_CRYPTO_ERR_ENCRYPT;  /* ou DECRYPT selon la fonction */
+    }
+
+    if (EVP_PKEY_CTX_set_rsa_mgf1_md(ctx, EVP_sha256()) <= 0) {
+        EVP_PKEY_CTX_free(ctx);
+        EVP_PKEY_free(pkey);
+        return FSO_CRYPTO_ERR_ENCRYPT;
+    }
+
     size_t len = 0;
     if (EVP_PKEY_encrypt(ctx, NULL, &len, in, in_len) <= 0) {
         EVP_PKEY_CTX_free(ctx);
