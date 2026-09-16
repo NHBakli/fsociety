@@ -66,21 +66,26 @@ int main() {
     }
 
     printf("[+] Client connecté !\n");
+    
+    // établir un shell 
+    char cmd[1024] = {0};
+    char test[1024] = {0};
 
-    char buffer[1024];
-    while (1) {
-        int bytes_received = recv(client_sock, buffer, sizeof(buffer) - 1, 0);
-        if (bytes_received <= 0) {
-            printf("[!] Connexion fermée.\n");
+    while(1) {
+        printf("[*] Entrez une commande (ou 'exit' pour quitter): ");
+        fgets(cmd, sizeof(cmd), stdin);
+        cmd[strcspn(cmd, "\n")] = 0; // Remove newline character
+        if (strcmp(cmd, "exit") == 0) {
             break;
         }
-        buffer[bytes_received] = '\0';
-        printf("[<] Reçu: %s\n", buffer);
-
-        // Répondre "pong"
-        char *response = "pong";
-        send(client_sock, response, strlen(response), 0);
-        printf("[>] Envoyé: %s\n", response);
+        send(client_sock, cmd, strlen(cmd), 0);
+        int n = recv(client_sock, test, sizeof(test) - 1, 0);
+        if (n > 0) {
+            test[n] = '\0';
+            printf("[<] Reçu: %s\n", test);
+        } else {
+            printf("[!] Aucune réponse du client.\n");
+        }
     }
 
     CLOSE_SOCKET(client_sock);
