@@ -127,6 +127,6 @@
 
     /* Parse uniquement l'en-tête (11 octets). Ne touche pas au payload. */
     int fso_unpack_header(const uint8_t *in, size_t in_size,
-                          fso_header_t *header);
+                      fso_header_t *header);
 
     #endif /* FSO_PROTOCOL_H */

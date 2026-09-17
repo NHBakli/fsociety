@@ -281,9 +281,8 @@ int fso_server_recv_secure(fso_server_t *srv, int idx,
 
     /* ---------- 2. Parser l'en-tête ---------- */
     fso_header_t header;
-    const uint8_t *dummy;
-    if (fso_unpack(hdr_buf, FSO_HEADER_SIZE, &header, &dummy) != 0) {
-        fprintf(stderr, "[-] fso_unpack (header) échoué\n");
+    if (fso_unpack_header(hdr_buf, FSO_HEADER_SIZE, &header) != 0) {
+        fprintf(stderr, "[-] fso_unpack_header échoué\n");
         return -1;
     }
     if (header.length > FSO_MAX_PAYLOAD) {
