@@ -1,4 +1,6 @@
 #include "comm.h"
+#include "crypto.h"
+#include <stdlib.h>
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -167,4 +169,118 @@ int fso_conn_reconnect(fso_conn_t *conn)
     }
 
     return -1;
+}
+
+/* ============================================================
+ * I/O chiffré (AES-256-GCM)
+ * ============================================================ */
+
+int fso_conn_send_secure(fso_conn_t *conn, const uint8_t *aes_key,
+                         uint8_t type, uint16_t seq_id,
+                         const uint8_t *payload, uint32_t payload_len)
+{
+    if (!conn || !conn->connected || !aes_key) return -1;
+
+    uint8_t *encrypted = malloc(FSO_MAX_PAYLOAD + 64);
+    if (!encrypted) return -1;
+
+    size_t enc_len = 0;
+    if (fso_aes_encrypt(aes_key, payload, payload_len,
+                        encrypted, &enc_len) != FSO_CRYPTO_OK) {
+        fprintf(stderr, "[-] Chiffrement AES échoué\n");
+        free(encrypted);
+        return -1;
+    }
+
+    uint8_t *packet = malloc(FSO_MAX_PAYLOAD + 128);
+    if (!packet) {
+        free(encrypted);
+        return -1;
+    }
+
+    int packet_len = fso_pack(type, seq_id,
+                              encrypted, (uint32_t)enc_len,
+                              packet, FSO_MAX_PAYLOAD + 128);
+    if (packet_len < 0) {
+        fprintf(stderr, "[-] fso_pack échoué\n");
+        free(encrypted);
+        free(packet);
+        return -1;
+    }
+
+    if (fso_conn_send(conn, packet, (size_t)packet_len) < 0) {
+        fprintf(stderr, "[-] Envoi échoué\n");
+        free(encrypted);
+        free(packet);
+        return -1;
+    }
+
+    free(encrypted);
+    free(packet);
+    return 0;
+}
+
+int fso_conn_recv_secure(fso_conn_t *conn, const uint8_t *aes_key,
+                         fso_header_t *header_out,
+                         uint8_t *payload_out, size_t payload_size)
+{
+    if (!conn || !conn->connected || !aes_key) return -1;
+
+    /* 1. Lire exactement l'en-tête. */
+    uint8_t hdr_buf[FSO_HEADER_SIZE];
+    if (fso_conn_recv_exact(conn, hdr_buf, FSO_HEADER_SIZE) != FSO_HEADER_SIZE) {
+        fprintf(stderr, "[-] Lecture en-tête échouée\n");
+        return -1;
+    }
+
+    /* 2. Parser l'en-tête. */
+    fso_header_t header;
+    if (fso_unpack_header(hdr_buf, FSO_HEADER_SIZE, &header) != 0) {
+        fprintf(stderr, "[-] fso_unpack_header échoué\n");
+        return -1;
+    }
+    if (header.length > FSO_MAX_PAYLOAD) return -1;
+
+    /* 3. Lire exactement le payload chiffré. */
+    uint8_t *encrypted = malloc(header.length);
+    if (!encrypted) return -1;
+    if (fso_conn_recv_exact(conn, encrypted, header.length) != (int)header.length) {
+        fprintf(stderr, "[-] Lecture payload échouée\n");
+        free(encrypted);
+        return -1;
+    }
+
+    /* 4. Déchiffrer. */
+    size_t dec_len = 0;
+    if (fso_aes_decrypt(aes_key, encrypted, header.length,
+                        payload_out, &dec_len) != FSO_CRYPTO_OK) {
+        fprintf(stderr, "[-] Déchiffrement AES échoué\n");
+        free(encrypted);
+        return -1;
+                        }
+    free(encrypted);
+
+    if (dec_len > payload_size) return -1;
+
+    if (header_out) {
+        *header_out = header;
+        header_out->length = (uint32_t)dec_len;
+    }
+    return (int)dec_len;
+}
+
+/* ---------- Réception EXACTE (boucle jusqu'à tout lire) ---------- */
+
+int fso_conn_recv_exact(fso_conn_t *conn, void *buf, size_t len)
+{
+    if (!conn || !conn->connected) return -1;
+
+    uint8_t *p = (uint8_t *)buf;
+    size_t got = 0;
+    while (got < len) {
+        int n = fso_conn_recv(conn, p + got, (int)(len - got));
+        if (n <= 0) return -1;
+        got += (size_t)n;
+    }
+    return (int)got;
 }

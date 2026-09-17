@@ -1,5 +1,6 @@
 #ifndef FSO_SERVER_H
 #define FSO_SERVER_H
+#include "protocol.h"
 
 #include <stdint.h>
 #include <netinet/in.h>
@@ -14,10 +15,12 @@
 
 /* État d'un client connecté. */
 typedef struct {
-    int      fd;           /* descripteur de socket */
-    uint32_t ip;           /* IP du client (network byte order) */
-    uint16_t port;         /* port du client */
-    int      active;       /* 1 si actif */
+ int      fd;
+ uint32_t ip;
+ uint16_t port;
+ int      active;
+ uint8_t  aes_key[32];   /* clé AES de session */
+ int      has_key;       /* 1 si la clé est définie */
 } fso_client_t;
 
 /* État du serveur. */
@@ -58,10 +61,25 @@ ssize_t fso_server_send(fso_server_t *srv, int idx,
 ssize_t fso_server_recv(fso_server_t *srv, int idx,
                         void *buf, size_t len);
 
+/* Envoie un paquet chiffré (payload chiffré avec AES).
+ * Retourne 0 en succès, -1 en erreur. */
+int fso_server_send_secure(fso_server_t *srv, int idx,
+                           uint8_t type, uint16_t seq_id,
+                           const uint8_t *payload, uint32_t payload_len);
+
+/* Reçoit et déchiffre un paquet.
+ * Retourne 0 en succès, -1 en erreur. */
+int fso_server_recv_secure(fso_server_t *srv, int idx,
+                           fso_header_t *header_out,
+                           uint8_t *payload_out, size_t payload_size);
+
 /* ---------- Utilitaires ---------- */
 
 /* Retourne une chaîne lisible pour l'IP du client `idx`.
  * Le buffer doit être au moins de taille INET_ADDRSTRLEN. */
 const char *fso_server_client_ip(const fso_server_t *srv, int idx);
+
+ssize_t fso_server_recv_exact(fso_server_t *srv, int idx,
+                              void *buf, size_t len);
 
 #endif /* FSO_SERVER_H */

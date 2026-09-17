@@ -69,18 +69,29 @@ static int run_server(fso_server_t *srv)
         if (ret == 0) continue; /* timeout */
 
         /* Nouvelle connexion ? */
-        /* Nouvelle connexion ? */
         if (FD_ISSET(srv->listen_fd, &readfds)) {
             int idx = fso_server_accept(srv);
             if (idx >= 0) {
-                /* Échange de clé. */
                 uint8_t aes_key[FSO_KEY_SIZE];
                 if (fso_handshake(srv, idx, aes_key) != 0) {
                     fprintf(stderr, "[-] Handshake échoué pour client #%d\n", idx);
                     fso_server_disconnect(srv, idx);
                 } else {
                     printf("[+] Client #%d : session chiffrée établie\n", idx);
-                    /* TODO: stocker aes_key pour ce client. */
+
+                    /* Stockage de la clé AES. */
+                    memcpy(srv->clients[idx].aes_key, aes_key, FSO_KEY_SIZE);
+                    srv->clients[idx].has_key = 1;
+
+                    /* Test : envoyer un message chiffré. */
+                    const char *msg = "hello from C2 (chiffré)";
+                    if (fso_server_send_secure(srv, idx, MSG_CMD, 0,
+                                                (const uint8_t *)msg,
+                                                (uint32_t)strlen(msg)) == 0) {
+                        printf("[+] Message chiffré envoyé au client #%d\n", idx);
+                                                } else {
+                                                    fprintf(stderr, "[-] Envoi chiffré échoué\n");
+                                                }
                 }
             }
         }
@@ -88,26 +99,26 @@ static int run_server(fso_server_t *srv)
         /* Données entrantes sur un client ? */
         for (int i = 0; i < FSO_MAX_CLIENTS; i++) {
             if (!srv->clients[i].active) continue;
+            if (!srv->clients[i].has_key) continue;
             if (!FD_ISSET(srv->clients[i].fd, &readfds)) continue;
 
-            uint8_t buf[4096];
-            ssize_t n = fso_server_recv(srv, i, buf, sizeof(buf));
+            fso_header_t header;
+            uint8_t payload[FSO_MAX_PAYLOAD];
 
-            if (n == 0) {
-                /* Déconnexion propre. */
-                fso_server_disconnect(srv, i);
-                continue;
-            }
+            int n = fso_server_recv_secure(srv, i, &header, payload, sizeof(payload));
             if (n < 0) {
-                perror("[server] recv");
                 fso_server_disconnect(srv, i);
                 continue;
             }
 
-            printf("[client #%d] %zd octets reçus : ", i, n);
-            /* Affichage brut (debug, avant crypto). */
-            fwrite(buf, 1, (size_t)n, stdout);
-            printf("\n");
+            printf("[client #%d] type=0x%02X seq=%u, %d octets\n",
+                   i, header.type, header.seq_id, n);
+
+            /* Affichage brut (pour debug). */
+            if (n > 0) {
+                fwrite(payload, 1, (size_t)n, stdout);
+                printf("\n");
+            }
         }
     }
 

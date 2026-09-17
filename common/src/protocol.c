@@ -100,6 +100,25 @@ int fso_unpack(const uint8_t *in, size_t in_size,
     return 0;
 }
 
+int fso_unpack_header(const uint8_t *in, size_t in_size,
+                      fso_header_t *header)
+{
+    if (!in || !header) return -1;
+    if (in_size < FSO_HEADER_SIZE) return -1;
+
+    uint32_t magic = read_u32_be(in);
+    if (magic != FSO_MAGIC) return -1;
+
+    header->magic   = magic;
+    header->type    = in[4];
+    header->seq_id  = read_u16_be(in + 5);
+    header->length  = read_u32_be(in + 7);
+
+    if (header->length > FSO_MAX_PAYLOAD) return -1;
+
+    return 0;
+}
+
 /* ---------- Build command ---------- */
 
 int fso_build_cmd(uint8_t cmd_id, const char *args,
