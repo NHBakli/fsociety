@@ -7,59 +7,47 @@
 ### 1.1 Vue d'ensemble
 
 ```
-┌──────────────────────────────┐         ┌──────────────────────────────┐
-│        ATTAQUANT             │         │           CIBLE              │
-│        (Linux)               │         │         (Windows)            │
-│                              │         │                              │
-│  ┌────────────────────────┐  │         │  ┌────────────────────────┐  │
-│  │    fsociety-c2         │  │         │  │   fsociety-loader      │  │
-│  │    (contrôleur)        │  │         │  │   (stager)             │  │
-│  │                        │  │         │  │                        │  │
-│  │  - Serveur socket      │  │         │  │  - Anti-VM / anti-debug│  │
-│  │  - Gestion sessions    │  │         │  │  - Download payload    │  │
-│  │  - Crypto RSA + AES    │  │         │  │  - Injection mémoire   │  │
-│  │  - CLI opérateur       │  │         │  │  - Obfuscation strings │  │
-│  │  - Logger              │  │         │  └───────────┬────────────┘  │
-│  └───────────┬────────────┘  │         │              │               │
-│              │               │         │              ▼               │
-│              │               │         │  ┌────────────────────────┐  │
-│              │               │         │  │   fsociety-implant     │  │
-│              │               │         │  │   (payload principal)  │  │
-│              │               │         │  │                        │  │
-│              │               │         │  │  ┌──────────────────┐  │  │
-│              │               │         │  │  │ mrrobot (shell)  │  │  │
-│              │               │         │  │  ├──────────────────┤  │  │
-│              │               │         │  │  │ whiterose        │  │  │
-│              │               │         │  │  │  (évasion +      │  │  │
-│              │               │         │  │  │   syscalls)      │  │  │
-│              │               │         │  │  ├──────────────────┤  │  │
-│              │               │         │  │  │ darkarmy         │  │  │
-│              │               │         │  │  │  (mvt latéral)   │  │  │
-│              │               │         │  │  ├──────────────────┤  │  │
-│              │               │         │  │  │ fivenine         │  │  │
-│              │               │         │  │  │  (persistance)   │  │  │
-│              │               │         │  │  ├──────────────────┤  │  │
-│              │               │         │  │  │ stage2           │  │  │
-│              │               │         │  │  │  (commandes      │  │  │
-│              │               │         │  │  │   avancées)      │  │  │
-│              │               │         │  │  ├──────────────────┤  │  │
-│              │               │         │  │  │ keylog / rdp /   │  │  │
-│              │               │         │  │  │ crack / pth /    │  │  │
-│              │               │         │  │  │ loot / phish /   │  │  │
-│              │               │         │  │  │ privsec          │  │  │
-│              │               │         │  │  └──────────────────┘  │  │
-│              │               │         │  │                        │  │
-│              │               │         │  │  - Crypto session      │  │
-│              │               │         │  │  - Comm HTTP/DNS       │  │
-│              │               │         │  │  - Watchdog            │  │
-│              │               │         │  │  - Nettoyage logs      │  │
-│              │               │         │  └───────────┬────────────┘  │
-│              │               │         │              │               │
-└──────────────┼───────────────┘         └──────────────┼───────────────┘
-               │                                        │
-               │        Canal chiffré (HTTPS/DNS)       │
-               └────────────────────────────────────────┘
-                    RSA (échange de clé) + AES (session)
+OPÉRATEUR(S) (Linux)      SERVEUR C2 (Linux)           CIBLE (Windows)
+────────────────────      ──────────────────           ───────────────
+
+┌──────────────────┐      ┌──────────────────┐         ┌──────────────────┐
+│   controller     │      │     server       │         │     loader       │
+│                  │      │                  │         │   (stager)       │
+│  - CLI ncurses   │      │  - Hub central   │         │                  │
+│  - LIST agents   │      │  - Port 4444     │         │  - Anti-VM       │
+│  - TASK <id> cmd │      │    (implants)    │         │  - Anti-debug    │
+│  - RESULT <id>   │      │  - Port 5555     │         │  - Download      │
+│                  │      │    (controllers) │         │  - Inject mémoire│
+│  Plusieurs opé-  │      │  - Gestion slots │         │  - Obfuscation   │
+│  rateurs peuvent │      │  - Mutex/threads │         └────────┬─────────┘
+│  se connecter    │      │  - Logger        │                  │
+└────────┬─────────┘      └────────┬─────────┘                  │
+         │                         │                            ▼
+         │   port 5555 (ctrl)      │         ┌──────────────────────────────┐
+         └────────────────────────►│         │         implant              │
+                                   │◄────────│                              │
+                                   │  port   │  - Beacon loop               │
+                                   │  4444   │  - Crypto session (AES)      │
+                                   │         │  - Watchdog                  │
+                                   │         │  - Nettoyage logs            │
+                                   │         │                              │
+                                   │         │  modules/                    │
+                                   │         │  ├── mrrobot/   (shell)      │
+                                   │         │  ├── whiterose/ (évasion)    │
+                                   │         │  ├── fivenine/  (persistance)│
+                                   │         │  ├── darkarmy/  (mvt latéral)│
+                                   │         │  ├── elliot/    (credentials)│
+                                   │         │  ├── keylog/                 │
+                                   │         │  ├── loot/                   │
+                                   │         │  ├── pth/                    │
+                                   │         │  ├── crack/                  │
+                                   │         │  ├── rdp/                    │
+                                   │         │  ├── phish/                  │
+                                   │         │  ├── privsec/                │
+                                   │         │  └── stage2/                 │
+                                   │         └──────────────────────────────┘
+                                   │
+                    Canal chiffré (RSA échange de clé + AES session)
 ```
 
 ### 1.2 Flux d'une intrusion
@@ -97,14 +85,45 @@
 
 ### 1.3 Composants et responsabilités
 
-| Composant | Rôle | Langage | OS cible |
-|---|---|---|---|
-| **fsociety-c2** | Contrôleur : serveur d'écoute, gestion sessions, CLI, crypto, logs | C | Linux |
-| **fsociety-implant** | Payload principal : communication, persistance, modules, watchdog | C | Windows |
-| **fsociety-loader** | Stager : anti-VM, download, injection mémoire, obfuscation | C | Windows |
-| **common** | Code partagé : protocole, crypto commune, types | C | Les deux |
+| Composant | Rôle | Langage | OS | Port |
+|---|---|---|---|---|
+| **server** | Hub central : écoute implants (4444) ET controllers (5555), gestion slots agents, mutex/threads, logger | C | Linux | 4444 + 5555 |
+| **controller** | CLI opérateur ncurses : LIST / TASK / RESULT. Plusieurs opérateurs peuvent s'y connecter simultanément | C | Linux | → 5555 |
+| **implant** | Payload principal : beacon loop, exécution modules, watchdog, nettoyage logs, crypto session AES | C | Windows | → 4444 |
+| **loader** | Stager : anti-VM, anti-debug, télécharge implant, injection mémoire, obfuscation strings | C | Windows | → server |
+| **common** | Code partagé : protocole (MAGIC/TYPE/LENGTH/PAYLOAD), types, crypto RSA+AES | C | Les deux | — |
 
-### 1.4 Protocole de communication
+---
+
+### 1.4 Explication détaillée de chaque composant
+
+#### `server/` — Le hub central
+Le server est la seule machine exposée sur le réseau. Il tourne en permanence et gère **deux canaux séparés** :
+- **Port 4444** : les implants se connectent ici. Chaque implant envoie un `BEACON <id>` régulièrement pour récupérer les commandes en attente.
+- **Port 5555** : les opérateurs (controllers) se connectent ici pour envoyer des commandes (`TASK <id> <cmd>`) ou récupérer des résultats (`RESULT <id>`).
+
+Le server fait uniquement le relais — il stocke les tâches et résultats dans des slots en mémoire et les distribue. Il ne connaît pas la logique des commandes.
+
+#### `controller/` — L'interface opérateur
+Le controller est l'outil que chaque membre de l'équipe utilise sur sa machine. Il se connecte au server sur le port 5555. Plusieurs opérateurs peuvent l'utiliser en même temps sans conflit car chaque connexion est stateless (connect → envoie commande → reçoit réponse → déconnecte).
+
+Interface ncurses avec menu :
+- `LIST` → affiche les agents connectés
+- `TASK <id> <cmd>` → envoie une commande à un agent précis
+- `RESULT <id>` → récupère le résultat de la dernière commande
+
+#### `implant/` — Le payload Windows
+L'implant tourne silencieusement sur la machine cible. Il boucle en envoyant un `BEACON <id>` au server toutes les N secondes. Si le server lui retourne une commande, il la dispatche vers le bon module et renvoie le résultat avec `RESULT <id> <output>`.
+
+Chaque module est dans son propre dossier `modules/<nom>/` avec son `.c` et son `.h` — **un développeur = un module = zéro conflit git**.
+
+#### `loader/` — Le stager Windows
+Petit exécutable déposé manuellement sur la cible en début d'intrusion. Son unique rôle : vérifier l'environnement (anti-VM, anti-debug), télécharger l'implant depuis le server, l'injecter directement en RAM (pas d'écriture sur disque), et l'exécuter. Une fois l'implant lancé, le loader s'efface.
+
+#### `common/` — Le code partagé
+Contient uniquement le protocole de communication (structure des paquets MAGIC/TYPE/LENGTH/PAYLOAD), les types partagés, et les primitives crypto (RSA pour l'échange de clé initial, AES-256-GCM pour la session). Compilé et linké dans server ET implant. Ce dossier est **rarement modifié** — tout changement ici doit être validé en équipe.
+
+### 1.5 Protocole de communication
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -128,7 +147,7 @@
   3. Session établie : tout en AES-256-GCM
 ```
 
-### 1.5 Arborescence monorepo
+### 1.6 Arborescence monorepo
 
 ```
 fsociety/                              # UN SEUL repo Git
@@ -136,65 +155,79 @@ fsociety/                              # UN SEUL repo Git
 ├── .gitattributes
 ├── README.md
 ├── LICENSE
-├── Makefile                           # Build racine
+├── Makefile                           # Build racine (build tout d'un coup)
 │
-├── c2/                                # fsociety-c2
+├── server/                            # Hub central C2 (Linux)
 │   ├── Makefile
 │   ├── include/
 │   └── src/
-│       ├── main.c
-│       ├── server.c / server.h
-│       ├── session.c / session.h
-│       ├── crypto.c / crypto.h
-│       ├── protocol.c / protocol.h
-│       ├── commands.c / commands.h
-│       ├── ui.c / ui.h
-│       └── logger.c / logger.h
-│
-├── implant/                           # fsociety-implant
-│   ├── Makefile
-│   ├── include/
-│   └── src/
-│       ├── main.c
-│       ├── comm.c / comm.h
-│       ├── crypto.c / crypto.h
-│       ├── fivenine.c / fivenine.h    # persistance
-│       ├── whiterose.c / whiterose.h  # évasion + syscalls
-│       ├── injection.c / injection.h
-│       ├── utils.c / utils.h
-│       └── modules/
-│           ├── mrrobot.c              # shell
-│           ├── keylog.c
-│           ├── rdp.c
-│           ├── crack.c
-│           ├── pth.c
-│           ├── loot.c
-│           ├── phish.c
-│           ├── darkarmy.c             # mouvement latéral
-│           ├── privsec.c
-│           └── stage2.c               # whatever
-│
-├── loader/                            # fsociety-loader
-│   ├── Makefile
-│   ├── include/
-│   └── src/
-│       ├── main.c
-│       ├── download.c / download.h
-│       ├── inject.c / inject.h
-│       ├── evasion.c / evasion.h
+│       ├── main.c                     # Init + lancement des deux threads
+│       ├── server.c / server.h        # Écoute port 4444 (implants)
+│       ├── controller.c / controller.h# Écoute port 5555 (opérateurs)
+│       ├── session.c / session.h      # Gestion des slots agents
+│       ├── logger.c / logger.h
 │       └── utils.c / utils.h
 │
-├── common/                            # Code partagé
+├── controller/                        # CLI opérateur (Linux)
 │   ├── Makefile
 │   ├── include/
-│   │   ├── protocol.h
-│   │   ├── crypto_common.h
-│   │   └── types.h
 │   └── src/
-│       ├── crypto_common.c
-│       └── protocol.c
+│       ├── main.c                     # Menu ncurses + dispatch
+│       ├── client.c / client.h        # Connexion au server (port 5555)
+│       ├── ui.c / ui.h                # Interface ncurses
+│       └── utils.c / utils.h
 │
-├── build/                             # Toolchains & scripts
+├── implant/                           # Payload principal (Windows)
+│   ├── Makefile
+│   ├── include/
+│   └── src/
+│       ├── main.c                     # Init + beacon loop + dispatch modules
+│       ├── comm.c / comm.h            # Connexion au server (port 4444)
+│       ├── crypto.c / crypto.h        # AES session
+│       ├── watchdog.c / watchdog.h    # Résilience
+│       ├── utils.c / utils.h
+│       └── modules/                   # ← chaque dev a son dossier ici
+│           ├── mrrobot/
+│           │   ├── mrrobot.c
+│           │   └── mrrobot.h
+│           ├── whiterose/
+│           │   ├── whiterose.c
+│           │   └── whiterose.h
+│           ├── fivenine/
+│           │   ├── fivenine.c
+│           │   └── fivenine.h
+│           ├── darkarmy/
+│           ├── elliot/
+│           ├── keylog/
+│           ├── loot/
+│           ├── pth/
+│           ├── crack/
+│           ├── rdp/
+│           ├── phish/
+│           ├── privsec/
+│           └── stage2/
+│
+├── loader/                            # Stager (Windows)
+│   ├── Makefile
+│   ├── include/
+│   └── src/
+│       ├── main.c
+│       ├── download.c / download.h    # Télécharge l'implant depuis server
+│       ├── inject.c / inject.h        # Injection mémoire (pas de disque)
+│       ├── evasion.c / evasion.h      # Anti-VM, anti-debug
+│       └── utils.c / utils.h
+│
+├── common/                            # Code partagé (server + implant)
+│   ├── Makefile
+│   ├── include/
+│   │   ├── protocol.h                 # Structure paquet MAGIC/TYPE/LENGTH/PAYLOAD
+│   │   ├── crypto_common.h            # RSA échange de clé + AES session
+│   │   └── types.h                    # Types partagés (AgentSlot, etc.)
+│   └── src/
+│       ├── protocol.c
+│       └── crypto_common.c
+│
+├── build/                             # Toolchains & scripts de compilation
 │   ├── Makefile.linux
 │   ├── Makefile.mingw
 │   └── toolchain-mingw.cmake
@@ -205,8 +238,7 @@ fsociety/                              # UN SEUL repo Git
 │   └── snapshots/
 │
 ├── docs/                              # Documentation
-│   ├── install.md
-│   ├── usage.md
+│   ├── action_plan.md
 │   ├── architecture.md
 │   ├── MITRE_mapping.md
 │   ├── blue_team_notes.md
@@ -222,7 +254,7 @@ fsociety/                              # UN SEUL repo Git
     └── test-lab.sh
 ```
 
-### 1.6 Gitflow monorepo
+### 1.7 Gitflow monorepo
 
 ```
 main                          # Version stable, démontrable
