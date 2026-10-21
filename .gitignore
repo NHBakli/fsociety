@@ -13,6 +13,7 @@
 *.dylib
 *.dll
 *.pdb
+/new_shell
 
 # Component executables
 /server/fsociety-server
