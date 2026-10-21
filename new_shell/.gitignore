@@ -1,0 +1,9 @@
+/client
+/client.exe
+/server
+/server.exe
+/new_ctrl
+/new_ctrl.exe
+/certs/
+*.log
+*.pcapng
