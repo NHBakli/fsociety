@@ -1,1 +1,21 @@
-.idea
+# Local editor and OS files
+.idea/
+.DS_Store
+
+# Generated build files (keep directory placeholders)
+**/build/*
+!**/build/.gitkeep
+*.o
+*.obj
+*.d
+*.a
+*.so
+*.dylib
+*.dll
+*.pdb
+
+# Component executables
+/server/fsociety-server
+/controller/fsociety-controller
+/implant/fsociety-implant
+/loader/fsociety-loader
