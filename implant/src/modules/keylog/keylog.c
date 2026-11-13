@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #include "../../../include/keylog.h"
 
 /* buffer où on stocke les touches capturées */
